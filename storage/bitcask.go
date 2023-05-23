@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"hash/crc32"
 	"io"
 	"os"
@@ -29,21 +28,49 @@ func SerializeSingle(kv KV) []byte {
 	payload.Write(kv.Key)
 	payload.Write(kv.Value)
 
+	return payload.Bytes()
+}
+
+func SerializeSingleWithHeader(kv KV) []byte {
+	payload := SerializeSingle(kv)
+
 	var header StorageHeader
-	header.CRC = crc32.ChecksumIEEE(payload.Bytes())
+	header.CRC = crc32.ChecksumIEEE(payload)
 	header.Timestamp = time.Now().UnixNano()
 	header.Info = 0
 
 	var ret bytes.Buffer
 	binary.Write(&ret, binary.BigEndian, &header)
-	ret.Write(payload.Bytes())
+	ret.Write(payload)
 
 	return ret.Bytes()
 }
 
 func SerializeMulti(kvs []KV) []byte {
-	//TODO
-	return nil
+	var payload bytes.Buffer
+	binary.Write(&payload, binary.BigEndian, uint32(len(kvs)))
+
+	for _, kv := range kvs {
+		payload.Write(SerializeSingle(kv))
+	}
+
+	return payload.Bytes()
+}
+
+func SerializeMultiWithHeader(kvs []KV) []byte {
+
+	payload := SerializeMulti(kvs)
+
+	var header StorageHeader
+	header.CRC = crc32.ChecksumIEEE(payload)
+	header.Timestamp = time.Now().UnixNano()
+	header.Info = 1
+
+	var ret bytes.Buffer
+	binary.Write(&ret, binary.BigEndian, &header)
+	ret.Write(payload)
+
+	return ret.Bytes()
 }
 
 func DeserializeHeader(buf io.Reader) (header StorageHeader, err error) {
@@ -51,7 +78,7 @@ func DeserializeHeader(buf io.Reader) (header StorageHeader, err error) {
 	return header, err
 }
 
-func DeserializeSingle(buf io.Reader, crc uint32) (kv KV, err error) {
+func DeserializeSingle(buf io.Reader, check bool, crc uint32) (kv KV, err error) {
 	var kSize uint32
 	var vSize uint32
 
@@ -83,15 +110,12 @@ func DeserializeSingle(buf io.Reader, crc uint32) (kv KV, err error) {
 		return kv, errors.New("value error")
 	}
 
-	//check CRC
-	var payload bytes.Buffer
-	binary.Write(&payload, binary.BigEndian, kSize)
-	binary.Write(&payload, binary.BigEndian, vSize)
-	payload.Write(key)
-	payload.Write(value)
+	if check {
+		payload := SerializeSingle(KV{key, value})
 
-	if crc32.ChecksumIEEE(payload.Bytes()) != crc {
-		return kv, errors.New("CRC mismatch")
+		if crc32.ChecksumIEEE(payload) != crc {
+			return kv, errors.New("CRC mismatch")
+		}
 	}
 
 	kv = KV{
@@ -102,13 +126,35 @@ func DeserializeSingle(buf io.Reader, crc uint32) (kv KV, err error) {
 	return kv, nil
 }
 
-func DeserializeMulti(buf io.Reader, crc uint32) (kvs []KV, err error) {
-	//TODO
-	return kvs, err
+func DeserializeMulti(buf io.Reader, check bool, crc uint32) (kvs []KV, err error) {
+	kvs = make([]KV, 0)
+
+	var cnt uint32
+	err = binary.Read(buf, binary.BigEndian, &cnt)
+	if err != nil {
+		return kvs, err
+	}
+
+	for i := uint32(0); i < cnt; i++ {
+		kv, err := DeserializeSingle(buf, false, 0)
+		if err != nil {
+			return kvs, err
+		}
+		kvs = append(kvs, kv)
+	}
+
+	if check {
+		payload := SerializeMulti(kvs)
+		if crc32.ChecksumIEEE(payload) != crc {
+			return kvs, errors.New("CRC mismatch")
+		}
+	}
+
+	return kvs, nil
 }
 
 func Deserialize(buf io.Reader) (kvs []KV, err error) {
-	fmt.Println("------------START DES--------------")
+	// fmt.Println("------------START DES--------------")
 	kvs = make([]KV, 0)
 
 	for {
@@ -120,15 +166,18 @@ func Deserialize(buf io.Reader) (kvs []KV, err error) {
 		} else {
 			if header.Info == 0 {
 				//single
-				kv, err := DeserializeSingle(buf, header.CRC)
+				kv, err := DeserializeSingle(buf, true, header.CRC)
 				if err != nil {
 					return nil, errors.New("deserialize fail, " + err.Error())
 				}
 				kvs = append(kvs, kv)
-				fmt.Println("ITEM", header, kv)
+				// fmt.Println("ITEM", header, kv)
 			} else {
 				//multi
-				mkv, err := DeserializeMulti(buf, header.CRC)
+				mkv, err := DeserializeMulti(buf, true, header.CRC)
+				// for _, kv := range mkv {
+				// 	fmt.Println("MULT", header, kv)
+				// }
 				if err != nil {
 					return nil, errors.New("deserialize fail, " + err.Error())
 				}
@@ -136,6 +185,7 @@ func Deserialize(buf io.Reader) (kvs []KV, err error) {
 			}
 		}
 	}
+	// fmt.Println("------------DES OK--------------")
 
 	return kvs, nil
 }
@@ -186,7 +236,7 @@ func (store *BitcaskStorage) Get(key []byte) (value []byte, err error) {
 }
 
 func (store *BitcaskStorage) Put(key []byte, value []byte) (err error) {
-	data := SerializeSingle(KV{key, value})
+	data := SerializeSingleWithHeader(KV{key, value})
 
 	_, err = store.file.Write(data)
 	if err != nil {
@@ -199,7 +249,7 @@ func (store *BitcaskStorage) Put(key []byte, value []byte) (err error) {
 
 func (store *BitcaskStorage) PutBatch(kvs []KV) (err error) {
 	//TODO compact
-	data := SerializeMulti(kvs)
+	data := SerializeMultiWithHeader(kvs)
 
 	_, err = store.file.Write(data)
 	if err != nil {
