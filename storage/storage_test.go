@@ -107,7 +107,7 @@ func TestDeserializeMulti(t *testing.T) {
 
 func TestBitcask(t *testing.T) {
 	os.Remove("../testdata/test.skv")
-	store, err := Open("../testdata/test.skv")
+	store, err := OpenBitcask("../testdata/test.skv")
 
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +138,7 @@ func TestBitcask(t *testing.T) {
 
 func TestBitcaskLoad(t *testing.T) {
 	os.Remove("../testdata/test.skv")
-	store, err := Open("../testdata/test.skv")
+	store, err := OpenBitcask("../testdata/test.skv")
 
 	if err != nil {
 		t.Fatal(err)
@@ -179,7 +179,7 @@ func TestBitcaskLoad(t *testing.T) {
 
 	fmt.Println("--------------")
 
-	store, _ = Open("../testdata/test.skv")
+	store, _ = OpenBitcask("../testdata/test.skv")
 
 	for _, k := range keys {
 		v, _ := store.Get(k)

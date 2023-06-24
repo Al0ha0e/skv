@@ -7,6 +7,7 @@ import (
 	"hash/crc32"
 	"io"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/Al0ha0e/skv/index"
@@ -193,9 +194,10 @@ func Deserialize(buf io.Reader) (kvs []KV, err error) {
 type BitcaskStorage struct {
 	index index.Index
 	file  *os.File
+	lock  sync.Mutex
 }
 
-func Open(path string) (store *BitcaskStorage, err error) {
+func OpenBitcask(path string) (store *BitcaskStorage, err error) {
 
 	rfile, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0777)
 	if err != nil {
@@ -273,4 +275,12 @@ func (store *BitcaskStorage) Delete(key []byte) (err error) {
 
 func (store *BitcaskStorage) Close() (err error) {
 	return store.file.Close()
+}
+
+func (store *BitcaskStorage) Lock() {
+	store.lock.Lock()
+}
+
+func (store *BitcaskStorage) Unlock() {
+	store.lock.Unlock()
 }
